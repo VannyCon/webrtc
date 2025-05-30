@@ -24,17 +24,12 @@ copyRoomIdBtn.addEventListener('click', () => {
 // Generate a random user ID
 const userId = Math.random().toString(36).substring(2, 15);
 
-// Connect to socket.io server
-const socket = io(window.location.origin, {
-  path: '/socket.io',
-  transports: ['websocket', 'polling']
-});
-
 // Store peer connections and streams
 const peers = {};
 let localStream = null;
 let screenStream = null;
 let isScreenSharing = false;
+let myPeer = null;
 
 // ICE servers configuration (STUN and TURN servers)
 const iceServers = {
@@ -47,6 +42,10 @@ const iceServers = {
   ]
 };
 
+// Check if we're in production (Vercel) or development
+const isProduction = window.location.hostname !== 'localhost' && 
+                    !window.location.hostname.includes('127.0.0.1');
+
 // Access the user's camera and microphone
 async function setupLocalStream() {
   try {
@@ -58,21 +57,12 @@ async function setupLocalStream() {
     // Display local video
     localVideo.srcObject = localStream;
     
-    // Join the room after getting media
-    socket.emit('join-room', roomId, userId);
-    
-    // Listen for other users connecting
-    socket.on('user-connected', handleUserConnected);
-    
-    // Listen for users disconnecting
-    socket.on('user-disconnected', handleUserDisconnected);
-    
-    // Listen for ICE candidates
-    socket.on('ice-candidate', handleIceCandidate);
-    
-    // Listen for offers and answers
-    socket.on('offer', handleOffer);
-    socket.on('answer', handleAnswer);
+    // Setup connections based on environment
+    if (isProduction) {
+      setupPeerJSConnection();
+    } else {
+      setupSocketIOConnection();
+    }
     
     // Setup controls
     setupControls();
@@ -83,10 +73,146 @@ async function setupLocalStream() {
   }
 }
 
-// Handle a new user connecting
-function handleUserConnected(newUserId) {
-  console.log('User connected:', newUserId);
+// Setup PeerJS connection for production (Vercel)
+function setupPeerJSConnection() {
+  // Load PeerJS script if not already loaded
+  if (!window.Peer) {
+    const script = document.createElement('script');
+    script.src = 'https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js';
+    script.onload = () => initializePeerJS();
+    document.head.appendChild(script);
+  } else {
+    initializePeerJS();
+  }
+}
+
+// Initialize PeerJS
+function initializePeerJS() {
+  // Create a new Peer with our userId and the public PeerServer
+  myPeer = new Peer(userId, {
+    host: 'peerjs-server.herokuapp.com',
+    secure: true,
+    port: 443,
+    debug: 3,
+    config: iceServers
+  });
   
+  myPeer.on('open', (id) => {
+    console.log('My peer ID is: ' + id);
+    
+    // Join the room
+    joinRoom();
+  });
+  
+  // Handle incoming calls
+  myPeer.on('call', (call) => {
+    console.log('Receiving call from:', call.peer);
+    
+    // Answer the call with our stream
+    call.answer(localStream);
+    
+    // Create a video element for the caller
+    const video = createVideoElement(call.peer);
+    
+    // When we receive their stream
+    call.on('stream', (remoteStream) => {
+      video.srcObject = remoteStream;
+    });
+    
+    // When they leave
+    call.on('close', () => {
+      const videoElement = document.getElementById(`video-${call.peer}`);
+      if (videoElement) {
+        videoElement.parentElement.remove();
+      }
+    });
+    
+    // Store the call
+    peers[call.peer] = call;
+  });
+  
+  myPeer.on('error', (err) => {
+    console.error('PeerJS error:', err);
+    alert('Connection error. Please try refreshing the page.');
+  });
+}
+
+// Join room with PeerJS
+function joinRoom() {
+  // Get all users in the room from PeerJS server
+  fetch(`https://peerjs-signaling.herokuapp.com/peers/${roomId}`)
+    .then(response => response.json())
+    .catch(() => []) // In case the server isn't available, start with empty array
+    .then(users => {
+      // Connect to each user in the room
+      users.forEach(user => {
+        if (user !== userId) {
+          connectToUser(user);
+        }
+      });
+      
+      // Register ourselves in this room
+      fetch(`https://peerjs-signaling.herokuapp.com/join/${roomId}/${userId}`, {
+        method: 'POST'
+      });
+    });
+}
+
+// Connect to a specific user with PeerJS
+function connectToUser(userId) {
+  console.log('Calling:', userId);
+  const call = myPeer.call(userId, localStream);
+  
+  const video = createVideoElement(userId);
+  
+  call.on('stream', (remoteStream) => {
+    video.srcObject = remoteStream;
+  });
+  
+  call.on('close', () => {
+    const videoElement = document.getElementById(`video-${userId}`);
+    if (videoElement) {
+      videoElement.parentElement.remove();
+    }
+  });
+  
+  peers[userId] = call;
+}
+
+// Setup Socket.IO connection for local development
+function setupSocketIOConnection() {
+  // Connect to socket.io server
+  const socket = io('/');
+  
+  // Join the room after getting media
+  socket.emit('join-room', roomId, userId);
+  
+  // Listen for other users connecting
+  socket.on('user-connected', (newUserId) => {
+    console.log('User connected via Socket.IO:', newUserId);
+    handleUserConnected(newUserId, socket);
+  });
+  
+  // Listen for users disconnecting
+  socket.on('user-disconnected', handleUserDisconnected);
+  
+  // Listen for ICE candidates
+  socket.on('ice-candidate', (iceCandidate, fromUserId) => {
+    handleIceCandidate(iceCandidate, fromUserId, socket);
+  });
+  
+  // Listen for offers and answers
+  socket.on('offer', (offer, fromUserId) => {
+    handleOffer(offer, fromUserId, socket);
+  });
+  
+  socket.on('answer', (answer, fromUserId) => {
+    handleAnswer(answer, fromUserId);
+  });
+}
+
+// Handle a new user connecting via Socket.IO
+function handleUserConnected(newUserId, socket) {
   // Create a new peer connection
   const peerConnection = new RTCPeerConnection(iceServers);
   peers[newUserId] = { peerConnection };
@@ -122,10 +248,18 @@ function handleUserConnected(newUserId) {
 function handleUserDisconnected(userId) {
   console.log('User disconnected:', userId);
   
-  // Close the peer connection
-  if (peers[userId]) {
-    peers[userId].peerConnection.close();
-    delete peers[userId];
+  if (isProduction) {
+    // In production with PeerJS
+    if (peers[userId]) {
+      peers[userId].close();
+      delete peers[userId];
+    }
+  } else {
+    // In development with Socket.IO
+    if (peers[userId] && peers[userId].peerConnection) {
+      peers[userId].peerConnection.close();
+      delete peers[userId];
+    }
   }
   
   // Remove the video element
@@ -136,7 +270,7 @@ function handleUserDisconnected(userId) {
 }
 
 // Handle ICE candidates
-function handleIceCandidate(iceCandidate, fromUserId) {
+function handleIceCandidate(iceCandidate, fromUserId, socket) {
   console.log('Received ICE candidate from:', fromUserId);
   
   const peerConnection = peers[fromUserId]?.peerConnection;
@@ -147,7 +281,7 @@ function handleIceCandidate(iceCandidate, fromUserId) {
 }
 
 // Handle offers
-function handleOffer(offer, fromUserId) {
+function handleOffer(offer, fromUserId, socket) {
   console.log('Received offer from:', fromUserId);
   
   // Create a new peer connection if it doesn't exist
@@ -261,12 +395,23 @@ function setupControls() {
         // Replace video track with screen track
         const videoTrack = screenStream.getVideoTracks()[0];
         
-        // Replace track in all peer connections
-        for (const userId in peers) {
-          const senders = peers[userId].peerConnection.getSenders();
-          const sender = senders.find(s => s.track.kind === 'video');
-          if (sender) {
-            sender.replaceTrack(videoTrack);
+        if (isProduction) {
+          // Replace tracks in PeerJS calls
+          for (const userId in peers) {
+            peers[userId].peerConnection.getSenders().forEach(sender => {
+              if (sender.track.kind === 'video') {
+                sender.replaceTrack(videoTrack);
+              }
+            });
+          }
+        } else {
+          // Replace track in all peer connections
+          for (const userId in peers) {
+            const senders = peers[userId].peerConnection.getSenders();
+            const sender = senders.find(s => s.track.kind === 'video');
+            if (sender) {
+              sender.replaceTrack(videoTrack);
+            }
           }
         }
         
@@ -303,13 +448,17 @@ function setupControls() {
       screenStream.getTracks().forEach(track => track.stop());
     }
     
-    // Close all peer connections
-    for (const userId in peers) {
-      peers[userId].peerConnection.close();
+    // Close all connections
+    if (isProduction && myPeer) {
+      myPeer.destroy();
+    } else {
+      // Close all peer connections
+      for (const userId in peers) {
+        if (peers[userId].peerConnection) {
+          peers[userId].peerConnection.close();
+        }
+      }
     }
-    
-    // Disconnect socket
-    socket.disconnect();
     
     // Redirect to home page
     window.location.href = '/';
@@ -327,12 +476,23 @@ function stopScreenSharing() {
       .then(stream => {
         const videoTrack = stream.getVideoTracks()[0];
         
-        // Replace track in all peer connections
-        for (const userId in peers) {
-          const senders = peers[userId].peerConnection.getSenders();
-          const sender = senders.find(s => s.track.kind === 'video');
-          if (sender) {
-            sender.replaceTrack(videoTrack);
+        if (isProduction) {
+          // Replace tracks in PeerJS calls
+          for (const userId in peers) {
+            peers[userId].peerConnection.getSenders().forEach(sender => {
+              if (sender.track.kind === 'video') {
+                sender.replaceTrack(videoTrack);
+              }
+            });
+          }
+        } else {
+          // Replace track in all peer connections
+          for (const userId in peers) {
+            const senders = peers[userId].peerConnection.getSenders();
+            const sender = senders.find(s => s.track.kind === 'video');
+            if (sender) {
+              sender.replaceTrack(videoTrack);
+            }
           }
         }
         

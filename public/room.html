@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WebRTC Video Chat Room</title>
   <link rel="stylesheet" href="/css/style.css">
-  <script src="/socket.io/socket.io.js"></script>
+  <!-- Socket.io is loaded conditionally in room.js for local development -->
+  <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
 </head>
 <body>
   <div class="room-container">
@@ -25,7 +26,7 @@
       </div>
       <div class="room-info">
         <p>Room ID: <span id="roomIdDisplay"></span></p>
-        <button id="copyRoomId" class="btn">Copy Room ID</button>
+        <button id="copyRoomId" class="btn">Copy Room Link</button>
       </div>
     </div>
     
@@ -37,6 +38,18 @@
     </div>
   </div>
 
+  <script>
+    // Check if we're in development mode
+    const isLocalDev = window.location.hostname === 'localhost' || 
+                     window.location.hostname.includes('127.0.0.1');
+    
+    // Conditionally load Socket.IO in development
+    if (isLocalDev) {
+      const script = document.createElement('script');
+      script.src = '/socket.io/socket.io.js';
+      document.head.appendChild(script);
+    }
+  </script>
   <script src="/js/room.js"></script>
 </body>
 </html> 
