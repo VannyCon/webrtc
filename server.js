@@ -34,6 +34,69 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', message: 'Server is running' });
 });
 
+// Store active room members - this won't persist on Vercel, but helps during development
+const activeRooms = {};
+
+// API endpoint for presence (helps with peer discovery)
+app.get('/api/presence', (req, res) => {
+  const { room, userId, peerId } = req.query;
+  
+  if (!room || !userId) {
+    return res.status(400).json({ error: 'Missing required parameters' });
+  }
+  
+  // Store the user in the room
+  if (!activeRooms[room]) {
+    activeRooms[room] = {};
+  }
+  
+  // Update or add the user with timestamp
+  activeRooms[room][userId] = {
+    peerId,
+    timestamp: Date.now()
+  };
+  
+  // Clean up stale users (older than 30 seconds)
+  Object.keys(activeRooms[room]).forEach(id => {
+    if (Date.now() - activeRooms[room][id].timestamp > 30000) {
+      delete activeRooms[room][id];
+    }
+  });
+  
+  // Return active users in the room
+  const activeUsers = Object.keys(activeRooms[room]).filter(id => id !== userId);
+  
+  res.json({
+    room,
+    activeUsers,
+    peerIds: activeUsers.map(id => activeRooms[room][id].peerId).filter(Boolean)
+  });
+});
+
+// API endpoint to get all users in a room
+app.get('/api/room/:roomId/users', (req, res) => {
+  const { roomId } = req.params;
+  
+  if (!activeRooms[roomId]) {
+    return res.json({ users: [] });
+  }
+  
+  // Clean up stale users first
+  Object.keys(activeRooms[roomId]).forEach(id => {
+    if (Date.now() - activeRooms[roomId][id].timestamp > 30000) {
+      delete activeRooms[roomId][id];
+    }
+  });
+  
+  const users = Object.keys(activeRooms[roomId]).map(id => ({
+    id,
+    peerId: activeRooms[roomId][id].peerId,
+    lastSeen: activeRooms[roomId][id].timestamp
+  }));
+  
+  res.json({ users });
+});
+
 // For local development
 if (process.env.NODE_ENV !== 'production') {
   const http = require('http');

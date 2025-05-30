@@ -105,6 +105,10 @@ function initializePeerJS() {
     window.updateConnectionStatus('Connecting to signaling server...', false);
   }
   
+  if (window.debugLog) {
+    window.debugLog(`Initializing PeerJS with ID: ${peerUserId}`);
+  }
+  
   // Create a new Peer with room-specific userId
   myPeer = new Peer(peerUserId, {
     // Using the official PeerJS cloud server
@@ -120,6 +124,10 @@ function initializePeerJS() {
       window.updateConnectionStatus('Connected to signaling server', false);
     }
     
+    if (window.debugLog) {
+      window.debugLog(`PeerJS connection established with ID: ${id}`);
+    }
+    
     // Join the room
     joinRoom();
   });
@@ -127,6 +135,10 @@ function initializePeerJS() {
   // Handle incoming calls
   myPeer.on('call', (call) => {
     console.log('Receiving call from:', call.peer);
+    
+    if (window.debugLog) {
+      window.debugLog(`Receiving call from: ${call.peer}`);
+    }
     
     // Update connection status
     if (window.updateConnectionStatus) {
@@ -145,19 +157,38 @@ function initializePeerJS() {
       console.log('Received remote stream');
       video.srcObject = remoteStream;
       
+      if (window.debugLog) {
+        window.debugLog(`Received stream from: ${remotePeerId}`);
+      }
+      
       // Update connection status
       if (window.updateConnectionStatus) {
         window.updateConnectionStatus('Call connected', false);
         // Hide the status after 2 seconds
         setTimeout(() => {
-          document.getElementById('connectionStatus').style.display = 'none';
+          document.getElementById('connectionStatus').style.display = 'block';
         }, 2000);
+      }
+      
+      // Update the peer count
+      if (window.updatePeersCount) {
+        window.updatePeersCount(Object.keys(peers).length + 1); // +1 because we're adding this peer
       }
     });
     
     // When they leave
     call.on('close', () => {
       video.parentElement.remove();
+      delete peers[remotePeerId];
+      
+      if (window.debugLog) {
+        window.debugLog(`Call with ${remotePeerId} closed`);
+      }
+      
+      // Update the peer count
+      if (window.updatePeersCount) {
+        window.updatePeersCount(Object.keys(peers).length);
+      }
     });
     
     // Store the call
@@ -166,6 +197,10 @@ function initializePeerJS() {
   
   myPeer.on('error', (err) => {
     console.error('PeerJS error:', err);
+    
+    if (window.debugLog) {
+      window.debugLog(`PeerJS error: ${err.type} - ${err.message || ''}`);
+    }
     
     // Update connection status
     if (window.updateConnectionStatus) {
@@ -186,6 +221,10 @@ function initializePeerJS() {
   myPeer.on('disconnected', () => {
     console.log('Disconnected from PeerJS server, attempting to reconnect...');
     
+    if (window.debugLog) {
+      window.debugLog('Disconnected from PeerJS server, attempting to reconnect...');
+    }
+    
     // Update connection status
     if (window.updateConnectionStatus) {
       window.updateConnectionStatus('Disconnected, reconnecting...', true);
@@ -197,6 +236,10 @@ function initializePeerJS() {
   
   myPeer.on('close', () => {
     console.log('PeerJS connection closed');
+    
+    if (window.debugLog) {
+      window.debugLog('PeerJS connection closed');
+    }
     
     // Update connection status
     if (window.updateConnectionStatus) {
@@ -210,11 +253,31 @@ function initializePeerJS() {
 function joinRoom() {
   console.log(`Joined room: ${roomId} with peer ID: ${userId}`);
   
+  if (window.debugLog) {
+    window.debugLog(`Joined room: ${roomId} with user ID: ${userId}`);
+  }
+  
+  if (window.updateConnectionStatus) {
+    window.updateConnectionStatus('Waiting for peers to join...', false);
+  }
+  
+  // Broadcast our presence via server storage
+  broadcastPresence();
+  
+  // Update peer count (just us at first)
+  if (window.updatePeersCount) {
+    window.updatePeersCount(1);
+  }
+  
   // For PeerJS, we'll use localStorage for peer discovery
   try {
     // Get existing room members
     let roomPeers = JSON.parse(localStorage.getItem(`room-${roomId}`)) || [];
     console.log('Existing peers in room:', roomPeers);
+    
+    if (window.debugLog) {
+      window.debugLog(`Found ${roomPeers.length} existing peers in room`);
+    }
     
     // Remove any stale peers (older than 1 hour)
     const now = Date.now();
@@ -224,6 +287,9 @@ function joinRoom() {
     roomPeers.forEach(peer => {
       if (peer.id !== userId) {
         console.log(`Attempting to connect to existing user: ${peer.id}`);
+        if (window.debugLog) {
+          window.debugLog(`Attempting to connect to existing user: ${peer.id}`);
+        }
         connectToUser(peer.id);
       }
     });
@@ -242,10 +308,20 @@ function joinRoom() {
     roomPeers.push(myInfo);
     localStorage.setItem(`room-${roomId}`, JSON.stringify(roomPeers));
     
+    if (window.debugLog) {
+      window.debugLog(`Added self to room, now ${roomPeers.length} peers`);
+    }
+    
     // Update peers list periodically
-    setInterval(() => {
+    const peerUpdateInterval = setInterval(() => {
       try {
+        if (!myPeer || myPeer.destroyed) {
+          clearInterval(peerUpdateInterval);
+          return;
+        }
+        
         let currentPeers = JSON.parse(localStorage.getItem(`room-${roomId}`)) || [];
+        
         // Update our timestamp
         currentPeers = currentPeers.filter(peer => peer.id !== userId);
         currentPeers.push({
@@ -255,20 +331,59 @@ function joinRoom() {
         });
         localStorage.setItem(`room-${roomId}`, JSON.stringify(currentPeers));
         
+        // Remove stale peers (older than 30 seconds)
+        const oldPeers = [...currentPeers]; // Make a copy
+        currentPeers = currentPeers.filter(peer => (Date.now() - peer.timestamp) < 30000);
+        
+        // If we removed any stale peers, update storage
+        if (oldPeers.length !== currentPeers.length) {
+          localStorage.setItem(`room-${roomId}`, JSON.stringify(currentPeers));
+          if (window.debugLog) {
+            window.debugLog(`Removed ${oldPeers.length - currentPeers.length} stale peers`);
+          }
+        }
+        
         // Check for new peers to connect to
         currentPeers.forEach(peer => {
           if (peer.id !== userId && !peers[peer.id]) {
             console.log(`Found new peer: ${peer.id}`);
+            if (window.debugLog) {
+              window.debugLog(`Found new peer: ${peer.id}`);
+            }
             connectToUser(peer.id);
           }
         });
+        
+        // Update the peer count
+        if (window.updatePeersCount) {
+          window.updatePeersCount(Object.keys(peers).length + 1); // +1 for ourselves
+        }
+        
+        // For debugging, update the connection status
+        if (window.updateConnectionStatus && Object.keys(peers).length === 0) {
+          const statusText = document.getElementById('statusText');
+          if (statusText && statusText.textContent.includes('Connected')) {
+            document.getElementById('connectionStatus').style.display = 'block';
+            window.updateConnectionStatus(`Waiting for peers to join (Room: ${roomId})...`, false);
+          }
+        }
+        
+        // Also broadcast our presence occasionally via the server
+        if (Math.random() < 0.2) { // 20% chance to broadcast each interval
+          broadcastPresence();
+        }
+        
       } catch (e) {
         console.error('Error updating peer list:', e);
+        if (window.debugLog) {
+          window.debugLog(`Error updating peer list: ${e.message}`);
+        }
       }
     }, 5000);
     
     // Clean up on window unload
     window.addEventListener('beforeunload', () => {
+      clearInterval(peerUpdateInterval);
       let currentPeers = JSON.parse(localStorage.getItem(`room-${roomId}`)) || [];
       currentPeers = currentPeers.filter(peer => peer.id !== userId);
       localStorage.setItem(`room-${roomId}`, JSON.stringify(currentPeers));
@@ -276,6 +391,30 @@ function joinRoom() {
     
   } catch (error) {
     console.error("Error with room management:", error);
+    if (window.debugLog) {
+      window.debugLog(`Error with room management: ${error.message}`);
+    }
+  }
+}
+
+// Broadcast our presence via server to help with discovery
+function broadcastPresence() {
+  try {
+    // Use a simple GET request that servers can log
+    const presenceUrl = `/api/presence?room=${roomId}&userId=${userId}&peerId=${myPeer.id}&t=${Date.now()}`;
+    fetch(presenceUrl)
+      .then(response => {
+        if (window.debugLog && response.ok) {
+          window.debugLog('Broadcast presence successfully');
+        }
+      })
+      .catch(err => {
+        // It's okay if this fails, it's just an additional discovery mechanism
+        console.log('Presence broadcast failed (this is normal on Vercel):', err);
+      });
+  } catch (e) {
+    // Ignore errors, this is just a helper
+    console.log('Error broadcasting presence (expected):', e);
   }
 }
 
@@ -286,17 +425,26 @@ function connectToUser(peerId) {
     return;
   }
   
-  console.log(`Calling peer: ${peerId}`);
+  console.log(`Calling peer: ${peerId} from ${userId}`);
   
   try {
     // The full peer ID includes the roomId
     const fullPeerId = `${roomId}-${peerId}`;
+    
+    // Update status
+    if (window.updateConnectionStatus) {
+      window.updateConnectionStatus(`Connecting to peer: ${peerId.substring(0, 5)}...`, false);
+      document.getElementById('connectionStatus').style.display = 'block';
+    }
     
     // Make the call
     const call = myPeer.call(fullPeerId, localStream);
     
     if (!call) {
       console.error(`Failed to create call to ${fullPeerId}`);
+      if (window.updateConnectionStatus) {
+        window.updateConnectionStatus(`Failed to call peer: ${peerId.substring(0, 5)}`, true);
+      }
       return;
     }
     
@@ -308,6 +456,15 @@ function connectToUser(peerId) {
       console.log(`Received stream from ${peerId}`);
       if (video.srcObject !== remoteStream) {
         video.srcObject = remoteStream;
+        
+        // Update connection status
+        if (window.updateConnectionStatus) {
+          window.updateConnectionStatus(`Connected to ${peerId.substring(0, 5)}`, false);
+          // Hide the status after 2 seconds
+          setTimeout(() => {
+            document.getElementById('connectionStatus').style.display = 'none';
+          }, 2000);
+        }
       }
     });
     
@@ -316,11 +473,21 @@ function connectToUser(peerId) {
       console.log(`Call with ${peerId} closed`);
       video.parentElement.remove();
       delete peers[peerId];
+      
+      // Update connection status
+      if (window.updateConnectionStatus && Object.keys(peers).length === 0) {
+        window.updateConnectionStatus('Call ended, waiting for peers...', false);
+        document.getElementById('connectionStatus').style.display = 'block';
+      }
     });
     
     // Handle errors
     call.on('error', (err) => {
       console.error(`Call error with ${peerId}:`, err);
+      if (window.updateConnectionStatus) {
+        window.updateConnectionStatus(`Call error with ${peerId.substring(0, 5)}: ${err}`, true);
+        document.getElementById('connectionStatus').style.display = 'block';
+      }
       delete peers[peerId];
     });
     
@@ -328,6 +495,10 @@ function connectToUser(peerId) {
     peers[peerId] = call;
   } catch (e) {
     console.error(`Error connecting to peer ${peerId}:`, e);
+    if (window.updateConnectionStatus) {
+      window.updateConnectionStatus(`Error connecting to ${peerId.substring(0, 5)}: ${e.message}`, true);
+      document.getElementById('connectionStatus').style.display = 'block';
+    }
   }
 }
 
