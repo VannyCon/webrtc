@@ -341,7 +341,7 @@ function joinRoom() {
     
     // Connect to each existing member
     roomPeers.forEach(peer => {
-      if (peer.id !== userId) {
+      if (peer.id !== userId && !isLikelyDuplicate(peer.id)) {
         console.log(`Attempting to connect to existing user: ${peer.id}`);
         if (window.debugLog) {
           window.debugLog(`Attempting to connect to existing user: ${peer.id}`);
@@ -379,9 +379,7 @@ function joinRoom() {
           
           // Check for new peers
           newPeers.forEach(peer => {
-            if (peer.id !== userId && 
-                !peers[peer.id] && 
-                !window.pendingConnections?.[peer.id]) {
+            if (peer.id !== userId && !isLikelyDuplicate(peer.id)) {
               if (window.debugLog) {
                 window.debugLog(`Found new peer from storage event: ${peer.id}`);
               }
@@ -427,9 +425,7 @@ function joinRoom() {
         
         // Check for new peers to connect to
         currentPeers.forEach(peer => {
-          if (peer.id !== userId && 
-              !peers[peer.id] && 
-              !window.pendingConnections?.[peer.id]) {
+          if (peer.id !== userId && !isLikelyDuplicate(peer.id)) {
             console.log(`Found new peer: ${peer.id}`);
             if (window.debugLog) {
               window.debugLog(`Found new peer: ${peer.id}`);
@@ -469,10 +465,7 @@ function joinRoom() {
                 
                 // Check for peers we're not connected to
                 data.users.forEach(user => {
-                  if (user.id !== userId && 
-                      !peers[user.id] && 
-                      !window.pendingConnections?.[user.id] && 
-                      user.peerId) {
+                  if (user.id !== userId && !isLikelyDuplicate(user.id) && user.peerId) {
                     if (window.debugLog) {
                       window.debugLog(`Found new peer from server: ${user.id}`);
                     }
@@ -1014,6 +1007,61 @@ function stopScreenSharing() {
     isScreenSharing = false;
     shareScreenBtn.textContent = 'Share Screen';
   }
+}
+
+// A function to check if a user ID is a likely duplicate
+function isLikelyDuplicate(testUserId) {
+  // If it's our own ID, it's not a duplicate
+  if (testUserId === userId) return false;
+  
+  // If we already have a connection, it's a duplicate
+  if (peers[testUserId]) return true;
+  
+  // If it's in pending connections, it's a duplicate
+  if (window.pendingConnections?.[testUserId]) return true;
+  
+  // Check if the user ID contains parts of our own ID (possible page refresh/duplicate tab)
+  // Many random IDs can have some characters in common, so we look for substantial overlap
+  if (userId.length > 5 && testUserId.length > 5) {
+    // Check if either ID contains a significant portion of the other
+    const longCommonSubstring = findLongestCommonSubstring(userId, testUserId);
+    if (longCommonSubstring.length >= 4) { // 4 characters is a meaningful match
+      if (window.debugLog) {
+        window.debugLog(`Detected likely duplicate: ${testUserId} (common: ${longCommonSubstring})`);
+      }
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+// Helper function to find the longest common substring
+function findLongestCommonSubstring(str1, str2) {
+  if (!str1 || !str2) return '';
+  
+  const m = str1.length;
+  const n = str2.length;
+  let longest = '';
+  
+  // Create a table to store lengths of longest common suffixes
+  const dp = Array(m + 1).fill().map(() => Array(n + 1).fill(0));
+  
+  // Build the dp table
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (str1[i - 1] === str2[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+        
+        // Update longest if needed
+        if (dp[i][j] > longest.length) {
+          longest = str1.substring(i - dp[i][j], i);
+        }
+      }
+    }
+  }
+  
+  return longest;
 }
 
 // Start the application

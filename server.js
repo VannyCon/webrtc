@@ -50,6 +50,18 @@ app.get('/api/presence', (req, res) => {
     activeRooms[room] = {};
   }
   
+  // Check if user is already in the room with a different userId (possible duplicate)
+  const existingIds = Object.keys(activeRooms[room]);
+  for (const id of existingIds) {
+    // Compare the peerId (which contains roomId-userId) instead of just userId
+    // to detect duplicates from the same device
+    if (id !== userId && activeRooms[room][id]?.peerId?.includes(userId)) {
+      console.log(`Detected duplicate user: ${userId} and ${id}`);
+      // Remove the older entry
+      delete activeRooms[room][id];
+    }
+  }
+  
   // Update or add the user with timestamp
   activeRooms[room][userId] = {
     peerId,
