@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WebRTC Video Chat Room</title>
   <link rel="stylesheet" href="/css/style.css">
-  <!-- Socket.io is loaded conditionally in room.js for local development -->
+  <!-- Use the latest version of PeerJS -->
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 </head>
 <body>
@@ -30,6 +30,11 @@
       </div>
     </div>
     
+    <div id="connectionStatus" style="text-align: center; padding: 5px; background-color: #f0f0f0; display: none;">
+      <span>Connection status: </span>
+      <span id="statusText">Connecting...</span>
+    </div>
+    
     <div class="video-grid" id="videoGrid">
       <div class="video-container local-video">
         <video id="localVideo" autoplay muted playsinline></video>
@@ -49,6 +54,37 @@
       script.src = '/socket.io/socket.io.js';
       document.head.appendChild(script);
     }
+    
+    // Show connection status in development or when there's an issue
+    window.addEventListener('load', function() {
+      const connectionStatus = document.getElementById('connectionStatus');
+      const statusText = document.getElementById('statusText');
+      
+      // Show connection status
+      connectionStatus.style.display = 'block';
+      
+      // Update status based on PeerJS connection
+      window.updateConnectionStatus = function(status, isError = false) {
+        statusText.textContent = status;
+        if (isError) {
+          connectionStatus.style.backgroundColor = '#ffdddd';
+          statusText.style.color = '#cc0000';
+        } else {
+          connectionStatus.style.backgroundColor = '#ddffdd';
+          statusText.style.color = '#007700';
+        }
+      };
+      
+      // Hide status after successful connection
+      setTimeout(() => {
+        if (statusText.textContent === 'Connecting...') {
+          updateConnectionStatus('Connected to signaling server', false);
+          setTimeout(() => {
+            connectionStatus.style.display = 'none';
+          }, 3000);
+        }
+      }, 5000);
+    });
   </script>
   <script src="/js/room.js"></script>
 </body>

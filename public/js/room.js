@@ -37,8 +37,17 @@ const iceServers = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    // You should add TURN servers for production use
-    // { urls: 'turn:your-turn-server.com', username: 'username', credential: 'credential' },
+    // Free TURN server for development
+    { 
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
   ]
 };
 
@@ -78,7 +87,7 @@ function setupPeerJSConnection() {
   // Load PeerJS script if not already loaded
   if (!window.Peer) {
     const script = document.createElement('script');
-    script.src = 'https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js';
+    script.src = 'https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js';
     script.onload = () => initializePeerJS();
     document.head.appendChild(script);
   } else {
@@ -88,16 +97,28 @@ function setupPeerJSConnection() {
 
 // Initialize PeerJS
 function initializePeerJS() {
-  // Create a new Peer with our userId and use the official PeerJS cloud server
-  myPeer = new Peer(userId, {
+  // Create a unique room-specific ID to avoid collisions
+  const peerUserId = `${roomId}-${userId}`;
+  
+  // Update connection status if available
+  if (window.updateConnectionStatus) {
+    window.updateConnectionStatus('Connecting to signaling server...', false);
+  }
+  
+  // Create a new Peer with room-specific userId
+  myPeer = new Peer(peerUserId, {
     // Using the official PeerJS cloud server
-    // No need to specify host, port, or path - it uses the default cloud server
-    debug: 3,
+    debug: 1,
     config: iceServers
   });
   
   myPeer.on('open', (id) => {
-    console.log('My peer ID is: ' + id);
+    console.log('Connected to PeerJS server with ID:', id);
+    
+    // Update connection status
+    if (window.updateConnectionStatus) {
+      window.updateConnectionStatus('Connected to signaling server', false);
+    }
     
     // Join the room
     joinRoom();
@@ -107,94 +128,207 @@ function initializePeerJS() {
   myPeer.on('call', (call) => {
     console.log('Receiving call from:', call.peer);
     
+    // Update connection status
+    if (window.updateConnectionStatus) {
+      window.updateConnectionStatus('Incoming call, connecting...', false);
+    }
+    
     // Answer the call with our stream
     call.answer(localStream);
     
     // Create a video element for the caller
-    const video = createVideoElement(call.peer);
+    const remotePeerId = call.peer.split('-')[1]; // Extract the userId part
+    const video = createVideoElement(remotePeerId);
     
     // When we receive their stream
     call.on('stream', (remoteStream) => {
+      console.log('Received remote stream');
       video.srcObject = remoteStream;
+      
+      // Update connection status
+      if (window.updateConnectionStatus) {
+        window.updateConnectionStatus('Call connected', false);
+        // Hide the status after 2 seconds
+        setTimeout(() => {
+          document.getElementById('connectionStatus').style.display = 'none';
+        }, 2000);
+      }
     });
     
     // When they leave
     call.on('close', () => {
-      const videoElement = document.getElementById(`video-${call.peer}`);
-      if (videoElement) {
-        videoElement.parentElement.remove();
-      }
+      video.parentElement.remove();
     });
     
     // Store the call
-    peers[call.peer] = call;
+    peers[remotePeerId] = call;
   });
   
   myPeer.on('error', (err) => {
     console.error('PeerJS error:', err);
-    alert('Connection error. Please try refreshing the page.');
+    
+    // Update connection status
+    if (window.updateConnectionStatus) {
+      window.updateConnectionStatus('Connection error: ' + err.type, true);
+      document.getElementById('connectionStatus').style.display = 'block';
+    }
+    
+    // Try to reconnect
+    setTimeout(() => {
+      console.log('Attempting to reconnect...');
+      if (myPeer.destroyed) {
+        initializePeerJS();
+      }
+    }, 5000);
+  });
+  
+  // Debug connection status
+  myPeer.on('disconnected', () => {
+    console.log('Disconnected from PeerJS server, attempting to reconnect...');
+    
+    // Update connection status
+    if (window.updateConnectionStatus) {
+      window.updateConnectionStatus('Disconnected, reconnecting...', true);
+      document.getElementById('connectionStatus').style.display = 'block';
+    }
+    
+    myPeer.reconnect();
+  });
+  
+  myPeer.on('close', () => {
+    console.log('PeerJS connection closed');
+    
+    // Update connection status
+    if (window.updateConnectionStatus) {
+      window.updateConnectionStatus('Connection closed', true);
+      document.getElementById('connectionStatus').style.display = 'block';
+    }
   });
 }
 
 // Join room with PeerJS
 function joinRoom() {
-  // Since we can't rely on an external signaling server, we'll use a simpler approach
-  // The first person to join creates the room, others connect when they join
   console.log(`Joined room: ${roomId} with peer ID: ${userId}`);
   
-  // We'll use localStorage to store room members (only works for same browser)
-  // For production, you would need a simple API endpoint to store room-peer mappings
-  
+  // For PeerJS, we'll use localStorage for peer discovery
   try {
     // Get existing room members
-    let roomMembers = JSON.parse(localStorage.getItem(`room-${roomId}`)) || [];
+    let roomPeers = JSON.parse(localStorage.getItem(`room-${roomId}`)) || [];
+    console.log('Existing peers in room:', roomPeers);
+    
+    // Remove any stale peers (older than 1 hour)
+    const now = Date.now();
+    roomPeers = roomPeers.filter(peer => (now - peer.timestamp) < 3600000);
     
     // Connect to each existing member
-    roomMembers.forEach(existingUserId => {
-      if (existingUserId !== userId) {
-        console.log(`Connecting to existing user: ${existingUserId}`);
-        connectToUser(existingUserId);
+    roomPeers.forEach(peer => {
+      if (peer.id !== userId) {
+        console.log(`Attempting to connect to existing user: ${peer.id}`);
+        connectToUser(peer.id);
       }
     });
     
-    // Add ourselves to the room
-    if (!roomMembers.includes(userId)) {
-      roomMembers.push(userId);
-      localStorage.setItem(`room-${roomId}`, JSON.stringify(roomMembers));
-    }
+    // Add ourselves to the room with timestamp
+    const myInfo = {
+      id: userId,
+      timestamp: Date.now(),
+      fullPeerId: myPeer.id
+    };
+    
+    // Remove our old entry if it exists
+    roomPeers = roomPeers.filter(peer => peer.id !== userId);
+    
+    // Add our new entry
+    roomPeers.push(myInfo);
+    localStorage.setItem(`room-${roomId}`, JSON.stringify(roomPeers));
+    
+    // Update peers list periodically
+    setInterval(() => {
+      try {
+        let currentPeers = JSON.parse(localStorage.getItem(`room-${roomId}`)) || [];
+        // Update our timestamp
+        currentPeers = currentPeers.filter(peer => peer.id !== userId);
+        currentPeers.push({
+          id: userId,
+          timestamp: Date.now(),
+          fullPeerId: myPeer.id
+        });
+        localStorage.setItem(`room-${roomId}`, JSON.stringify(currentPeers));
+        
+        // Check for new peers to connect to
+        currentPeers.forEach(peer => {
+          if (peer.id !== userId && !peers[peer.id]) {
+            console.log(`Found new peer: ${peer.id}`);
+            connectToUser(peer.id);
+          }
+        });
+      } catch (e) {
+        console.error('Error updating peer list:', e);
+      }
+    }, 5000);
     
     // Clean up on window unload
     window.addEventListener('beforeunload', () => {
-      const updatedMembers = JSON.parse(localStorage.getItem(`room-${roomId}`)) || [];
-      const filteredMembers = updatedMembers.filter(id => id !== userId);
-      localStorage.setItem(`room-${roomId}`, JSON.stringify(filteredMembers));
+      let currentPeers = JSON.parse(localStorage.getItem(`room-${roomId}`)) || [];
+      currentPeers = currentPeers.filter(peer => peer.id !== userId);
+      localStorage.setItem(`room-${roomId}`, JSON.stringify(currentPeers));
     });
     
   } catch (error) {
     console.error("Error with room management:", error);
-    // Fallback - just announce our presence
   }
 }
 
 // Connect to a specific user with PeerJS
-function connectToUser(userId) {
-  console.log('Calling:', userId);
-  const call = myPeer.call(userId, localStream);
+function connectToUser(peerId) {
+  if (peers[peerId]) {
+    console.log(`Already connected to ${peerId}`);
+    return;
+  }
   
-  const video = createVideoElement(userId);
+  console.log(`Calling peer: ${peerId}`);
   
-  call.on('stream', (remoteStream) => {
-    video.srcObject = remoteStream;
-  });
-  
-  call.on('close', () => {
-    const videoElement = document.getElementById(`video-${userId}`);
-    if (videoElement) {
-      videoElement.parentElement.remove();
+  try {
+    // The full peer ID includes the roomId
+    const fullPeerId = `${roomId}-${peerId}`;
+    
+    // Make the call
+    const call = myPeer.call(fullPeerId, localStream);
+    
+    if (!call) {
+      console.error(`Failed to create call to ${fullPeerId}`);
+      return;
     }
-  });
-  
-  peers[userId] = call;
+    
+    // Create video element
+    const video = createVideoElement(peerId);
+    
+    // Handle the stream when it arrives
+    call.on('stream', (remoteStream) => {
+      console.log(`Received stream from ${peerId}`);
+      if (video.srcObject !== remoteStream) {
+        video.srcObject = remoteStream;
+      }
+    });
+    
+    // Handle call ending
+    call.on('close', () => {
+      console.log(`Call with ${peerId} closed`);
+      video.parentElement.remove();
+      delete peers[peerId];
+    });
+    
+    // Handle errors
+    call.on('error', (err) => {
+      console.error(`Call error with ${peerId}:`, err);
+      delete peers[peerId];
+    });
+    
+    // Store the call reference
+    peers[peerId] = call;
+  } catch (e) {
+    console.error(`Error connecting to peer ${peerId}:`, e);
+  }
 }
 
 // Setup Socket.IO connection for local development
@@ -416,11 +550,22 @@ function setupControls() {
         if (isProduction) {
           // Replace tracks in PeerJS calls
           for (const userId in peers) {
-            peers[userId].peerConnection.getSenders().forEach(sender => {
-              if (sender.track.kind === 'video') {
-                sender.replaceTrack(videoTrack);
+            if (peers[userId].peerConnection) {
+              peers[userId].peerConnection.getSenders().forEach(sender => {
+                if (sender.track.kind === 'video') {
+                  sender.replaceTrack(videoTrack);
+                }
+              });
+            } else if (typeof peers[userId].replaceTrack === 'function') {
+              // For PeerJS direct calls
+              const senders = peers[userId].peerConnection?.getSenders();
+              if (senders) {
+                const sender = senders.find(s => s.track.kind === 'video');
+                if (sender) {
+                  sender.replaceTrack(videoTrack);
+                }
               }
-            });
+            }
           }
         } else {
           // Replace track in all peer connections
@@ -474,8 +619,19 @@ function setupControls() {
       for (const userId in peers) {
         if (peers[userId].peerConnection) {
           peers[userId].peerConnection.close();
+        } else if (typeof peers[userId].close === 'function') {
+          peers[userId].close();
         }
       }
+    }
+    
+    // Remove from room peers list
+    try {
+      let roomPeers = JSON.parse(localStorage.getItem(`room-${roomId}`)) || [];
+      roomPeers = roomPeers.filter(peer => peer.id !== userId);
+      localStorage.setItem(`room-${roomId}`, JSON.stringify(roomPeers));
+    } catch (e) {
+      console.error('Error removing from room list:', e);
     }
     
     // Redirect to home page
@@ -497,11 +653,22 @@ function stopScreenSharing() {
         if (isProduction) {
           // Replace tracks in PeerJS calls
           for (const userId in peers) {
-            peers[userId].peerConnection.getSenders().forEach(sender => {
-              if (sender.track.kind === 'video') {
-                sender.replaceTrack(videoTrack);
+            if (peers[userId].peerConnection) {
+              peers[userId].peerConnection.getSenders().forEach(sender => {
+                if (sender.track.kind === 'video') {
+                  sender.replaceTrack(videoTrack);
+                }
+              });
+            } else if (typeof peers[userId].replaceTrack === 'function') {
+              // For PeerJS direct calls
+              const senders = peers[userId].peerConnection?.getSenders();
+              if (senders) {
+                const sender = senders.find(s => s.track.kind === 'video');
+                if (sender) {
+                  sender.replaceTrack(videoTrack);
+                }
               }
-            });
+            }
           }
         } else {
           // Replace track in all peer connections
