@@ -88,9 +88,10 @@ function setupPeerJSConnection() {
 
 // Initialize PeerJS
 function initializePeerJS() {
-  // Create a new Peer with our userId and the public PeerServer
+  // Create a new Peer with our userId and use the free PeerJS cloud server
   myPeer = new Peer(userId, {
-    host: 'peerjs-server.herokuapp.com',
+    // Using the official PeerJS server instead of the Heroku one
+    host: 'peer-server.metered.live',
     secure: true,
     port: 443,
     debug: 3,
@@ -139,23 +140,42 @@ function initializePeerJS() {
 
 // Join room with PeerJS
 function joinRoom() {
-  // Get all users in the room from PeerJS server
-  fetch(`https://peerjs-signaling.herokuapp.com/peers/${roomId}`)
-    .then(response => response.json())
-    .catch(() => []) // In case the server isn't available, start with empty array
-    .then(users => {
-      // Connect to each user in the room
-      users.forEach(user => {
-        if (user !== userId) {
-          connectToUser(user);
-        }
-      });
-      
-      // Register ourselves in this room
-      fetch(`https://peerjs-signaling.herokuapp.com/join/${roomId}/${userId}`, {
-        method: 'POST'
-      });
+  // Since we can't rely on an external signaling server, we'll use a simpler approach
+  // The first person to join creates the room, others connect when they join
+  console.log(`Joined room: ${roomId} with peer ID: ${userId}`);
+  
+  // We'll use localStorage to store room members (only works for same browser)
+  // For production, you would need a simple API endpoint to store room-peer mappings
+  
+  try {
+    // Get existing room members
+    let roomMembers = JSON.parse(localStorage.getItem(`room-${roomId}`)) || [];
+    
+    // Connect to each existing member
+    roomMembers.forEach(existingUserId => {
+      if (existingUserId !== userId) {
+        console.log(`Connecting to existing user: ${existingUserId}`);
+        connectToUser(existingUserId);
+      }
     });
+    
+    // Add ourselves to the room
+    if (!roomMembers.includes(userId)) {
+      roomMembers.push(userId);
+      localStorage.setItem(`room-${roomId}`, JSON.stringify(roomMembers));
+    }
+    
+    // Clean up on window unload
+    window.addEventListener('beforeunload', () => {
+      const updatedMembers = JSON.parse(localStorage.getItem(`room-${roomId}`)) || [];
+      const filteredMembers = updatedMembers.filter(id => id !== userId);
+      localStorage.setItem(`room-${roomId}`, JSON.stringify(filteredMembers));
+    });
+    
+  } catch (error) {
+    console.error("Error with room management:", error);
+    // Fallback - just announce our presence
+  }
 }
 
 // Connect to a specific user with PeerJS

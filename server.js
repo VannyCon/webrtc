@@ -5,6 +5,13 @@ const { v4: uuidv4 } = require('uuid');
 // Create express app
 const app = express();
 
+// Add CORS headers for Vercel deployment
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+  next();
+});
+
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -20,6 +27,11 @@ app.get('/create-room', (req, res) => {
 
 app.get('/room/:roomId', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'room.html'));
+});
+
+// API endpoint for health check
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', message: 'Server is running' });
 });
 
 // For local development
@@ -70,7 +82,9 @@ if (process.env.NODE_ENV !== 'production') {
   server.listen(PORT, () => {
     console.log(`Local development server running on port ${PORT}`);
   });
-} 
+} else {
+  console.log('Running in production mode');
+}
 
 // Export for Vercel serverless deployment
 module.exports = app; 

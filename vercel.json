@@ -12,6 +12,10 @@
     ],
     "routes": [
         {
+            "src": "/api/(.*)",
+            "dest": "server.js"
+        },
+        {
             "src": "/create-room",
             "dest": "server.js"
         },
@@ -28,7 +32,7 @@
             "dest": "/public/css/$1"
         },
         {
-            "src": "/(.*\\.html)",
+            "src": "/(.*\\.(html|ico|png|jpg|jpeg|svg|gif))",
             "dest": "/public/$1"
         },
         {
