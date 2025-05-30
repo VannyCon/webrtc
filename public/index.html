@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebRTC Video Chat</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>WebRTC Video Chat</h1>
+    <p>Start a new video chat room and invite others to join!</p>
+    
+    <div class="action-buttons">
+      <a href="/create-room" class="btn btn-primary">Create New Room</a>
+      
+      <div class="join-form">
+        <input type="text" id="roomId" placeholder="Enter Room ID">
+        <button onclick="joinRoom()" class="btn">Join Room</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function joinRoom() {
+      const roomId = document.getElementById('roomId').value.trim();
+      if (roomId) {
+        window.location.href = `/room/${roomId}`;
+      } else {
+        alert('Please enter a valid Room ID');
+      }
+    }
+  </script>
+</body>
+</html> 
