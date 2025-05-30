@@ -45,6 +45,22 @@ This will start the server on http://localhost:3000
 
 ## Deployment
 
+### Deploy to Vercel (Recommended)
+
+1. Install Vercel CLI:
+```bash
+npm install -g vercel
+```
+
+2. Run the deployment script:
+- On Windows: `deploy-vercel.bat`
+- On Linux/Mac: `./deploy-vercel.sh` (make it executable first with `chmod +x deploy-vercel.sh`)
+
+Or deploy manually:
+```bash
+vercel --prod
+```
+
 ### Deploy to Heroku
 
 1. Create a Heroku account if you don't have one
@@ -74,7 +90,6 @@ git push heroku master
 
 The application can be deployed to any platform that supports Node.js applications like:
 
-- Vercel
 - Netlify
 - AWS Elastic Beanstalk
 - Digital Ocean
@@ -97,4 +112,17 @@ const iceServers = {
 };
 ```
 
-You can use services like [Twilio's TURN service](https://www.twilio.com/stun-turn) or [Coturn](https://github.com/coturn/coturn) (self-hosted). 
+You can use services like [Twilio's TURN service](https://www.twilio.com/stun-turn) or [Coturn](https://github.com/coturn/coturn) (self-hosted).
+
+## Troubleshooting
+
+### WebRTC Connection Issues
+- Make sure you're using HTTPS in production
+- Check browser console for any errors
+- Ensure you've configured TURN servers for production
+- Some networks may block WebRTC traffic; try using a different network
+
+### Vercel Deployment Issues
+- Check that all routes in vercel.json are correctly configured
+- Verify socket.io connection in the browser console
+- Make sure your browser supports WebRTC (most modern browsers do) 

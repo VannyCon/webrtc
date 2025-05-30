@@ -12,6 +12,10 @@
     ],
     "routes": [
         {
+            "src": "/socket.io/(.*)",
+            "dest": "server.js"
+        },
+        {
             "src": "/create-room",
             "dest": "server.js"
         },
@@ -20,8 +24,12 @@
             "dest": "server.js"
         },
         {
-            "src": "/socket.io/(.*)",
-            "dest": "server.js"
+            "src": "/js/(.*)",
+            "dest": "/public/js/$1"
+        },
+        {
+            "src": "/css/(.*)",
+            "dest": "/public/css/$1"
         },
         {
             "src": "/(.*)",

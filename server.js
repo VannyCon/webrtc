@@ -10,7 +10,8 @@ const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
-  }
+  },
+  transports: ['websocket', 'polling']
 });
 
 // Serve static files
@@ -60,11 +61,21 @@ io.on('connection', (socket) => {
   });
 });
 
-// Start server
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+// Only start the server if we're running directly (not when imported by Vercel)
+if (require.main === module) {
+  // Start server with automatic port finding
+  const PORT = process.env.PORT || 3000;
+  server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  }).on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.log(`Port ${PORT} is busy, trying with port ${PORT + 1}`);
+      server.listen(PORT + 1);
+    } else {
+      console.error('Server error:', err);
+    }
+  });
+}
 
 // Export for Vercel serverless deployment
-module.exports = app; 
+module.exports = { app, server }; 
