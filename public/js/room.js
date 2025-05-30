@@ -143,6 +143,9 @@ function initializePeerJS() {
   // Create a unique room-specific ID to avoid collisions
   const peerUserId = `${roomId}-${userId}`;
   
+  // Clear any existing connections
+  window.pendingConnections = {};
+  
   // Update connection status if available
   if (window.updateConnectionStatus) {
     window.updateConnectionStatus('Connecting to signaling server...', false);
@@ -177,10 +180,21 @@ function initializePeerJS() {
   
   // Handle incoming calls
   myPeer.on('call', (call) => {
-    console.log('Receiving call from:', call.peer);
+    // Extract the caller's user ID
+    const callerPeerId = call.peer.split('-')[1]; // Extract the userId part
+    
+    console.log('Receiving call from:', callerPeerId);
+    
+    // Check if we already have a connection to this peer
+    if (peers[callerPeerId]) {
+      console.log(`Already connected to ${callerPeerId}, ignoring duplicate call`);
+      // Still answer the call to avoid hanging
+      call.answer(localStream);
+      return;
+    }
     
     if (window.debugLog) {
-      window.debugLog(`Receiving call from: ${call.peer}`);
+      window.debugLog(`Receiving call from: ${callerPeerId}`);
     }
     
     // Update connection status
@@ -192,8 +206,7 @@ function initializePeerJS() {
     call.answer(localStream);
     
     // Create a video element for the caller
-    const remotePeerId = call.peer.split('-')[1]; // Extract the userId part
-    const video = createVideoElement(remotePeerId);
+    const video = createVideoElement(callerPeerId);
     
     // When we receive their stream
     call.on('stream', (remoteStream) => {
@@ -201,7 +214,7 @@ function initializePeerJS() {
       video.srcObject = remoteStream;
       
       if (window.debugLog) {
-        window.debugLog(`Received stream from: ${remotePeerId}`);
+        window.debugLog(`Received stream from: ${callerPeerId}`);
       }
       
       // Update connection status
@@ -209,7 +222,7 @@ function initializePeerJS() {
         window.updateConnectionStatus('Call connected', false);
         // Hide the status after 2 seconds
         setTimeout(() => {
-          document.getElementById('connectionStatus').style.display = 'block';
+          document.getElementById('connectionStatus').style.display = 'none';
         }, 2000);
       }
       
@@ -222,10 +235,10 @@ function initializePeerJS() {
     // When they leave
     call.on('close', () => {
       video.parentElement.remove();
-      delete peers[remotePeerId];
+      delete peers[callerPeerId];
       
       if (window.debugLog) {
-        window.debugLog(`Call with ${remotePeerId} closed`);
+        window.debugLog(`Call with ${callerPeerId} closed`);
       }
       
       // Update the peer count
@@ -235,7 +248,7 @@ function initializePeerJS() {
     });
     
     // Store the call
-    peers[remotePeerId] = call;
+    peers[callerPeerId] = call;
   });
   
   myPeer.on('error', (err) => {
@@ -366,7 +379,9 @@ function joinRoom() {
           
           // Check for new peers
           newPeers.forEach(peer => {
-            if (peer.id !== userId && !peers[peer.id]) {
+            if (peer.id !== userId && 
+                !peers[peer.id] && 
+                !window.pendingConnections?.[peer.id]) {
               if (window.debugLog) {
                 window.debugLog(`Found new peer from storage event: ${peer.id}`);
               }
@@ -412,7 +427,9 @@ function joinRoom() {
         
         // Check for new peers to connect to
         currentPeers.forEach(peer => {
-          if (peer.id !== userId && !peers[peer.id]) {
+          if (peer.id !== userId && 
+              !peers[peer.id] && 
+              !window.pendingConnections?.[peer.id]) {
             console.log(`Found new peer: ${peer.id}`);
             if (window.debugLog) {
               window.debugLog(`Found new peer: ${peer.id}`);
@@ -452,7 +469,10 @@ function joinRoom() {
                 
                 // Check for peers we're not connected to
                 data.users.forEach(user => {
-                  if (user.id !== userId && !peers[user.id] && user.peerId) {
+                  if (user.id !== userId && 
+                      !peers[user.id] && 
+                      !window.pendingConnections?.[user.id] && 
+                      user.peerId) {
                     if (window.debugLog) {
                       window.debugLog(`Found new peer from server: ${user.id}`);
                     }
@@ -514,10 +534,26 @@ function broadcastPresence() {
 
 // Connect to a specific user with PeerJS
 function connectToUser(peerId) {
+  // Prevent connecting to ourselves
+  if (peerId === userId) {
+    return;
+  }
+  
+  // Check if we already have a connection to this peer
   if (peers[peerId]) {
     console.log(`Already connected to ${peerId}`);
     return;
   }
+  
+  // Add a pending flag to prevent duplicate connection attempts
+  if (window.pendingConnections && window.pendingConnections[peerId]) {
+    console.log(`Connection to ${peerId} already in progress`);
+    return;
+  }
+  
+  // Mark this connection as pending
+  if (!window.pendingConnections) window.pendingConnections = {};
+  window.pendingConnections[peerId] = true;
   
   console.log(`Calling peer: ${peerId} from ${userId}`);
   
@@ -539,8 +575,19 @@ function connectToUser(peerId) {
       if (window.updateConnectionStatus) {
         window.updateConnectionStatus(`Failed to call peer: ${peerId.substring(0, 5)}`, true);
       }
+      delete window.pendingConnections[peerId];
       return;
     }
+    
+    // Set a timeout to clear the pending flag if connection fails
+    const connectionTimeout = setTimeout(() => {
+      if (window.pendingConnections[peerId]) {
+        delete window.pendingConnections[peerId];
+        if (window.debugLog) {
+          window.debugLog(`Connection to ${peerId} timed out`);
+        }
+      }
+    }, 15000); // 15 seconds timeout
     
     // Create video element
     const video = createVideoElement(peerId);
@@ -548,6 +595,9 @@ function connectToUser(peerId) {
     // Handle the stream when it arrives
     call.on('stream', (remoteStream) => {
       console.log(`Received stream from ${peerId}`);
+      clearTimeout(connectionTimeout);
+      delete window.pendingConnections[peerId];
+      
       if (video.srcObject !== remoteStream) {
         video.srcObject = remoteStream;
         
@@ -565,6 +615,8 @@ function connectToUser(peerId) {
     // Handle call ending
     call.on('close', () => {
       console.log(`Call with ${peerId} closed`);
+      clearTimeout(connectionTimeout);
+      delete window.pendingConnections[peerId];
       video.parentElement.remove();
       delete peers[peerId];
       
@@ -578,6 +630,9 @@ function connectToUser(peerId) {
     // Handle errors
     call.on('error', (err) => {
       console.error(`Call error with ${peerId}:`, err);
+      clearTimeout(connectionTimeout);
+      delete window.pendingConnections[peerId];
+      
       if (window.updateConnectionStatus) {
         window.updateConnectionStatus(`Call error with ${peerId.substring(0, 5)}: ${err}`, true);
         document.getElementById('connectionStatus').style.display = 'block';
@@ -589,6 +644,8 @@ function connectToUser(peerId) {
     peers[peerId] = call;
   } catch (e) {
     console.error(`Error connecting to peer ${peerId}:`, e);
+    delete window.pendingConnections[peerId];
+    
     if (window.updateConnectionStatus) {
       window.updateConnectionStatus(`Error connecting to ${peerId.substring(0, 5)}: ${e.message}`, true);
       document.getElementById('connectionStatus').style.display = 'block';
