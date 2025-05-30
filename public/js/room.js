@@ -88,12 +88,10 @@ function setupPeerJSConnection() {
 
 // Initialize PeerJS
 function initializePeerJS() {
-  // Create a new Peer with our userId and use the free PeerJS cloud server
+  // Create a new Peer with our userId and use the official PeerJS cloud server
   myPeer = new Peer(userId, {
-    // Using the official PeerJS server instead of the Heroku one
-    host: 'peer-server.metered.live',
-    secure: true,
-    port: 443,
+    // Using the official PeerJS cloud server
+    // No need to specify host, port, or path - it uses the default cloud server
     debug: 3,
     config: iceServers
   });
