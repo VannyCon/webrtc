@@ -14,10 +14,10 @@ roomIdDisplay.textContent = roomId;
 
 // Copy room ID to clipboard
 copyRoomIdBtn.addEventListener('click', () => {
-  navigator.clipboard.writeText(roomId).then(() => {
-    alert('Room ID copied to clipboard');
+  navigator.clipboard.writeText(window.location.href).then(() => {
+    alert('Room URL copied to clipboard! Share this with others to invite them.');
   }).catch(err => {
-    console.error('Could not copy room ID: ', err);
+    console.error('Could not copy room URL: ', err);
   });
 });
 
@@ -25,7 +25,10 @@ copyRoomIdBtn.addEventListener('click', () => {
 const userId = Math.random().toString(36).substring(2, 15);
 
 // Connect to socket.io server
-const socket = io('/');
+const socket = io(window.location.origin, {
+  path: '/socket.io',
+  transports: ['websocket', 'polling']
+});
 
 // Store peer connections and streams
 const peers = {};
