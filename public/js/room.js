@@ -14,12 +14,55 @@ roomIdDisplay.textContent = roomId;
 
 // Copy room ID to clipboard
 copyRoomIdBtn.addEventListener('click', () => {
+  copyRoomLinkToClipboard();
+});
+
+// Room link display and copy button
+document.addEventListener('DOMContentLoaded', function() {
+  // Display room link in the instructions
+  const roomLinkDisplay = document.getElementById('roomLinkDisplay');
+  if (roomLinkDisplay) {
+    roomLinkDisplay.textContent = window.location.href;
+  }
+  
+  // Add click handler for the second copy button
+  const copyRoomLinkBtn = document.getElementById('copyRoomLink');
+  if (copyRoomLinkBtn) {
+    copyRoomLinkBtn.addEventListener('click', () => {
+      copyRoomLinkToClipboard();
+    });
+  }
+});
+
+// Function to copy room link to clipboard
+function copyRoomLinkToClipboard() {
   navigator.clipboard.writeText(window.location.href).then(() => {
-    alert('Room URL copied to clipboard! Share this with others to invite them.');
+    alert('Room link copied to clipboard! Share this with others to invite them.');
+    if (window.debugLog) {
+      window.debugLog('Room link copied to clipboard');
+    }
   }).catch(err => {
     console.error('Could not copy room URL: ', err);
+    if (window.debugLog) {
+      window.debugLog(`Error copying room link: ${err.message}`);
+    }
+    
+    // Fallback for browsers that don't support clipboard API
+    const textArea = document.createElement('textarea');
+    textArea.value = window.location.href;
+    document.body.appendChild(textArea);
+    textArea.select();
+    
+    try {
+      document.execCommand('copy');
+      alert('Room link copied to clipboard! Share this with others to invite them.');
+    } catch (e) {
+      alert('Cannot copy room link automatically. Please copy this link manually: ' + window.location.href);
+    }
+    
+    document.body.removeChild(textArea);
   });
-});
+}
 
 // Generate a random user ID
 const userId = Math.random().toString(36).substring(2, 15);
@@ -312,6 +355,30 @@ function joinRoom() {
       window.debugLog(`Added self to room, now ${roomPeers.length} peers`);
     }
     
+    // Setup "new peer" event listener for cross-tab discovery
+    window.addEventListener('storage', function(e) {
+      if (e.key === `room-${roomId}`) {
+        try {
+          const newPeers = JSON.parse(e.newValue) || [];
+          if (window.debugLog) {
+            window.debugLog(`Storage event: room-${roomId} changed, now ${newPeers.length} peers`);
+          }
+          
+          // Check for new peers
+          newPeers.forEach(peer => {
+            if (peer.id !== userId && !peers[peer.id]) {
+              if (window.debugLog) {
+                window.debugLog(`Found new peer from storage event: ${peer.id}`);
+              }
+              connectToUser(peer.id);
+            }
+          });
+        } catch (err) {
+          console.error('Error processing storage event:', err);
+        }
+      }
+    });
+    
     // Update peers list periodically
     const peerUpdateInterval = setInterval(() => {
       try {
@@ -371,6 +438,33 @@ function joinRoom() {
         // Also broadcast our presence occasionally via the server
         if (Math.random() < 0.2) { // 20% chance to broadcast each interval
           broadcastPresence();
+        }
+        
+        // Check server for new peers occasionally
+        if (Math.random() < 0.3) { // 30% chance each interval
+          fetch(`/api/room/${roomId}/users`)
+            .then(response => response.json())
+            .then(data => {
+              if (data.users && data.users.length > 0) {
+                if (window.debugLog) {
+                  window.debugLog(`Server reports ${data.users.length} users in room`);
+                }
+                
+                // Check for peers we're not connected to
+                data.users.forEach(user => {
+                  if (user.id !== userId && !peers[user.id] && user.peerId) {
+                    if (window.debugLog) {
+                      window.debugLog(`Found new peer from server: ${user.id}`);
+                    }
+                    connectToUser(user.id);
+                  }
+                });
+              }
+            })
+            .catch(err => {
+              // It's okay if this fails on Vercel
+              console.log('Error checking room users (expected on Vercel):', err);
+            });
         }
         
       } catch (e) {

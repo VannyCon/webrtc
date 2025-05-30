@@ -86,8 +86,16 @@
     </div>
     
     <div id="emptyRoomMessage" class="join-instruction">
-      <p>You're the only person in this room. Share the room link to invite others.</p>
-      <p>Make sure both you and your peers allow camera and microphone access.</p>
+      <h3>You're the only person in this room</h3>
+      <p>This is a peer-to-peer video chat application. To have a video call:</p>
+      <ol style="text-align: left; max-width: 500px; margin: 10px auto;">
+        <li>Share this room link with someone else by clicking "Copy Room Link"</li>
+        <li>Wait for them to join your room using a different device or browser</li>
+        <li>Once they join, your video call will connect automatically</li>
+      </ol>
+      <p><strong>Your room link:</strong> <span id="roomLinkDisplay"></span></p>
+      <button id="copyRoomLink" class="btn" style="margin-top: 10px;">Copy Room Link</button>
+      <p style="margin-top: 15px; color: #666;">Make sure both you and your peers allow camera and microphone access.</p>
     </div>
     
     <div class="video-grid" id="videoGrid">
